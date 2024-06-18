@@ -7,17 +7,27 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/gorm"
 	"github.com/mingrammer/go-todo-rest-api-example/app/model"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
+var tracer = otel.Tracer("github.com/mingrammer/go-todo-rest-api-example")
+
 func GetAllProjects(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
+	_, span := tracer.Start(r.Context(), "GetAllProjects")
+	defer span.End()
+
 	projects := []model.Project{}
 	db.Find(&projects)
 	respondJSON(w, http.StatusOK, projects)
 }
 
 func CreateProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
-	project := model.Project{}
+	ctx, span := tracer.Start(r.Context(), "CreateProject")
+	defer span.End()
 
+	project := model.Project{}
 	decoder := json.NewDecoder(r.Body)
 	if err := decoder.Decode(&project); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
@@ -25,7 +35,7 @@ func CreateProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	if err := db.Save(&project).Error; err != nil {
+	if err := db.WithContext(ctx).Save(&project).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -33,10 +43,12 @@ func CreateProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
 }
 
 func GetProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
+	ctx, span := tracer.Start(r.Context(), "GetProject")
+	defer span.End()
 
+	vars := mux.Vars(r)
 	title := vars["title"]
-	project := getProjectOr404(db, title, w, r)
+	project := getProjectOr404(db.WithContext(ctx), title, w, r)
 	if project == nil {
 		return
 	}
@@ -44,10 +56,12 @@ func GetProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
 }
 
 func UpdateProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
+	ctx, span := tracer.Start(r.Context(), "UpdateProject")
+	defer span.End()
 
+	vars := mux.Vars(r)
 	title := vars["title"]
-	project := getProjectOr404(db, title, w, r)
+	project := getProjectOr404(db.WithContext(ctx), title, w, r)
 	if project == nil {
 		return
 	}
@@ -59,7 +73,7 @@ func UpdateProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	if err := db.Save(&project).Error; err != nil {
+	if err := db.WithContext(ctx).Save(&project).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -67,14 +81,16 @@ func UpdateProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
 }
 
 func DeleteProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
+	ctx, span := tracer.Start(r.Context(), "DeleteProject")
+	defer span.End()
 
+	vars := mux.Vars(r)
 	title := vars["title"]
-	project := getProjectOr404(db, title, w, r)
+	project := getProjectOr404(db.WithContext(ctx), title, w, r)
 	if project == nil {
 		return
 	}
-	if err := db.Delete(&project).Error; err != nil {
+	if err := db.WithContext(ctx).Delete(&project).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -82,15 +98,17 @@ func DeleteProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
 }
 
 func ArchiveProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
+	ctx, span := tracer.Start(r.Context(), "ArchiveProject")
+	defer span.End()
 
+	vars := mux.Vars(r)
 	title := vars["title"]
-	project := getProjectOr404(db, title, w, r)
+	project := getProjectOr404(db.WithContext(ctx), title, w, r)
 	if project == nil {
 		return
 	}
 	project.Archive()
-	if err := db.Save(&project).Error; err != nil {
+	if err := db.WithContext(ctx).Save(&project).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -98,15 +116,17 @@ func ArchiveProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
 }
 
 func RestoreProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
+	ctx, span := tracer.Start(r.Context(), "RestoreProject")
+	defer span.End()
 
+	vars := mux.Vars(r)
 	title := vars["title"]
-	project := getProjectOr404(db, title, w, r)
+	project := getProjectOr404(db.WithContext(ctx), title, w, r)
 	if project == nil {
 		return
 	}
 	project.Restore()
-	if err := db.Save(&project).Error; err != nil {
+	if err := db.WithContext(ctx).Save(&project).Error; err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -115,10 +135,6 @@ func RestoreProject(db *gorm.DB, w http.ResponseWriter, r *http.Request) {
 
 // getProjectOr404 gets a project instance if exists, or respond the 404 error otherwise
 func getProjectOr404(db *gorm.DB, title string, w http.ResponseWriter, r *http.Request) *model.Project {
-	project := model.Project{}
-	if err := db.First(&project, model.Project{Title: title}).Error; err != nil {
-		respondError(w, http.StatusNotFound, err.Error())
-		return nil
-	}
-	return &project
-}
+	_, span := tracer.Start(r.Context(), "getProjectOr404")
+	defer span.End()
+
