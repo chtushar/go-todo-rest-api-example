@@ -5,18 +5,21 @@ import (
 	"log"
 	"net/http"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/gorm"
 	"github.com/mingrammer/go-todo-rest-api-example/app/handler"
 	"github.com/mingrammer/go-todo-rest-api-example/app/model"
 	"github.com/mingrammer/go-todo-rest-api-example/config"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 // App has router and db instances
 type App struct {
 	Router *mux.Router
 	DB     *gorm.DB
+	Tracer trace.Tracer
 }
 
 // Initialize initializes the app with predefined configuration
@@ -36,6 +39,7 @@ func (a *App) Initialize(config *config.Config) {
 
 	a.DB = model.DBMigrate(db)
 	a.Router = mux.NewRouter()
+	a.Tracer = otel.Tracer("github.com/mingrammer/go-todo-rest-api-example")
 	a.setRouters()
 }
 
@@ -82,13 +86,16 @@ func (a *App) Delete(path string, f func(w http.ResponseWriter, r *http.Request)
 
 // Run the app on it's router
 func (a *App) Run(host string) {
-	log.Fatal(http.ListenAndServe(host, otelhttp.NewHandler(a.Router, "server").ServeHTTP))
+	log.Fatal(http.ListenAndServe(host, otelhttp.NewHandler(a.Router, "server")))
 }
 
 type RequestHandlerFunction func(db *gorm.DB, w http.ResponseWriter, r *http.Request)
 
 func (a *App) handleRequest(handler RequestHandlerFunction) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, span := a.Tracer.Start(r.Context(), "handleRequest")
+		defer span.End()
+		r = r.WithContext(ctx)
 		handler(a.DB, w, r)
 	}
 }
