@@ -10,6 +10,12 @@ import (
 	"github.com/mingrammer/go-todo-rest-api-example/app/handler"
 	"github.com/mingrammer/go-todo-rest-api-example/app/model"
 	"github.com/mingrammer/go-todo-rest-api-example/config"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
 )
 
 // App has router and db instances
@@ -36,6 +42,7 @@ func (a *App) Initialize(config *config.Config) {
 	a.DB = model.DBMigrate(db)
 	a.Router = mux.NewRouter()
 	a.setRouters()
+	initTracer()
 }
 
 // setRouters sets the all required routers
@@ -61,22 +68,22 @@ func (a *App) setRouters() {
 
 // Get wraps the router for GET method
 func (a *App) Get(path string, f func(w http.ResponseWriter, r *http.Request)) {
-	a.Router.HandleFunc(path, f).Methods("GET")
+	a.Router.Handle(path, otelhttp.NewHandler(http.HandlerFunc(f), path)).Methods("GET")
 }
 
 // Post wraps the router for POST method
 func (a *App) Post(path string, f func(w http.ResponseWriter, r *http.Request)) {
-	a.Router.HandleFunc(path, f).Methods("POST")
+	a.Router.Handle(path, otelhttp.NewHandler(http.HandlerFunc(f), path)).Methods("POST")
 }
 
 // Put wraps the router for PUT method
 func (a *App) Put(path string, f func(w http.ResponseWriter, r *http.Request)) {
-	a.Router.HandleFunc(path, f).Methods("PUT")
+	a.Router.Handle(path, otelhttp.NewHandler(http.HandlerFunc(f), path)).Methods("PUT")
 }
 
 // Delete wraps the router for DELETE method
 func (a *App) Delete(path string, f func(w http.ResponseWriter, r *http.Request)) {
-	a.Router.HandleFunc(path, f).Methods("DELETE")
+	a.Router.Handle(path, otelhttp.NewHandler(http.HandlerFunc(f), path)).Methods("DELETE")
 }
 
 // Run the app on it's router
@@ -91,3 +98,17 @@ func (a *App) handleRequest(handler RequestHandlerFunction) http.HandlerFunc {
 		handler(a.DB, w, r)
 	}
 }
+
+func initTracer() {
+	exp, err := stdouttrace.New(stdouttrace.WithPrettyPrint())
+	if err != nil {
+		log.Fatal(err)
+	}
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exp),
+		sdktrace.WithResource(resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceNameKey.String("go-todo-rest-api"),
+		)),
+	)
+	otel.SetTracerProvider
